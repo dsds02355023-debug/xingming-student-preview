@@ -1,6 +1,12 @@
 name: Student v1.0.42 obfuscated Fold8 preview APK
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/student-preview.yml'
+      - '.github/scripts/student-preview-acceptance.sh'
 permissions:
   contents: read
 jobs:
