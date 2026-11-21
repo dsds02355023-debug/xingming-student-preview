@@ -4,7 +4,8 @@ cd "${GITHUB_WORKSPACE:?}"
 mkdir -p smoke-results
 mode=${1:?stage required}
 exec > >(tee -a "smoke-results/stage-$mode.log") 2>&1
-trap 'rc=$?; printf "%s stage=%s line=%s exit=%s command=%s\n" "$(date -u +%FT%TZ)" "$mode" "$LINENO" "$rc" "$BASH_COMMAND" >&2' ERR
+trap 'rc=$?; printf "::error title=Student CI failure::stage=%s line=%s exit=%s command=%s\n" "$mode" "$LINENO" "$rc" "$BASH_COMMAND" >&2' ERR
+export PATH="${ANDROID_HOME:?}/platform-tools:$ANDROID_HOME/emulator:$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
 printf '%s START stage=%s\n' "$(date -u +%FT%TZ)" "$mode"
 apk="$GITHUB_WORKSPACE/xingming-student-preview-v1.0.42.apk"
 case "$mode" in
@@ -69,6 +70,12 @@ sdk)
   timeout -k 5s 30s /tmp/student-preview-venv/bin/pip install --disable-pip-version-check --timeout 10 --retries 1 websocket-client==1.8.0
   ;;
 boot)
+  if [ ! -x "$ANDROID_HOME/platform-tools/adb" ]; then
+    echo "::error::ADB executable missing at $ANDROID_HOME/platform-tools/adb"
+    exit 127
+  fi
+  command -v adb
+  timeout -k 2s 10s adb version
   timeout -k 5s 15s adb start-server
   nohup "$ANDROID_HOME/emulator/emulator" -avd student-preview -port 5554 -accel on -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -memory 2048 -cores 2 > smoke-results/emulator-stdout.log 2> smoke-results/emulator-stderr.log < /dev/null &
   pid=$!
@@ -99,7 +106,7 @@ launch)
   activity=$(sed -n "s/^launchable-activity: name='\([^']*\)'.*/\1/p" smoke-results/apk-badging.txt)
   test -n "$activity"
   timeout -k 5s 45s adb shell am start -W -n "$STUDENT_TEST_PACKAGE/$activity" | tee smoke-results/app-launch.txt
-  grep -Eq '^Status: ok\r?$' smoke-results/app-launch.txt
+  tr -d '\r' < smoke-results/app-launch.txt | grep -Fx 'Status: ok'
   sleep 3
   timeout -k 2s 10s adb shell pidof "$STUDENT_TEST_PACKAGE" | tee smoke-results/app-pid.txt
   test -s smoke-results/app-pid.txt
