@@ -141,6 +141,10 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Run Fold8 and feature emulator acceptance
+        # GitHub-hosted runners may not expose KVM. Force the Android emulator
+        # to use its supported TCG software CPU backend instead of exiting on -accel off.
+        env:
+          ANDROID_I_WANT_MY_TCG: "yes"
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
