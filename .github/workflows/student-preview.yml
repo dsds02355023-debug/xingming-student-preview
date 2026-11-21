@@ -38,7 +38,7 @@ jobs:
               try:
                   with zipfile.ZipFile(archive) as z:
                       gradle = z.read('app/build.gradle').decode('utf-8')
-                  match = re.search(r'\\bversionCode\\s+(\\d+)', gradle)
+                  match = re.search(r'\bversionCode\s+(\d+)', gradle)
                   if match:
                       choices.append((int(match.group(1)), archive.name == 'source.zip', archive))
               except (zipfile.BadZipFile, KeyError, UnicodeDecodeError):
@@ -55,15 +55,15 @@ jobs:
               z.extractall(root)
           gradle_file = root / 'app/build.gradle'
           gradle = gradle_file.read_text(encoding='utf-8')
-          gradle, count = re.subn(r"applicationIdSuffix\\s+(['\\"])\\.student\\1", "applicationIdSuffix '.student.next'", gradle)
+          gradle, count = re.subn(r"applicationIdSuffix\s+(['\"])\.student\1", "applicationIdSuffix '.student.next'", gradle)
           if count != 1:
               raise SystemExit(f'Expected one student applicationIdSuffix, found {count}')
-          gradle, count = re.subn(r'\\bversionCode\\s+\\d+', 'versionCode 42', gradle)
+          gradle, count = re.subn(r'\bversionCode\s+\d+', 'versionCode 42', gradle)
           if count != 1:
               raise SystemExit(f'Expected one versionCode, found {count}')
-          gradle, count = re.subn(r"\\bversionName\\s+(['\\"])[^'\\"]+\\1", 'versionName "1.0.42"', gradle)
+          gradle, count = re.subn(r"\bversionName\s+(['\"])[^'\"]+\1", 'versionName "1.0.42"', gradle)
           if count == 0:
-              gradle = re.sub(r'(\\bversionCode\\s+42)', r'\\1\\n        versionName "1.0.42"', gradle, count=1)
+              gradle = re.sub(r'(\bversionCode\s+42)', r'\1\n        versionName "1.0.42"', gradle, count=1)
           elif count != 1:
               raise SystemExit(f'Expected at most one versionName, found {count}')
           gradle_file.write_text(gradle.replace('姓名學・學生版', '姓名學・學生測試版'), encoding='utf-8')
@@ -84,7 +84,7 @@ jobs:
           root = Path('private-source/student-next-source')
           gradle = root / 'app/build.gradle'
           text = gradle.read_text(encoding='utf-8')
-          text, count = re.subn(r"applicationIdSuffix\\s+(['\\"])\\.student\\.next\\1", "applicationIdSuffix '.student.preview'", text)
+          text, count = re.subn(r"applicationIdSuffix\s+(['\"])\.student\.next\1", "applicationIdSuffix '.student.preview'", text)
           if count != 1:
               raise SystemExit(f'Expected one isolated .student.next suffix, found {count}')
           gradle.write_text(text, encoding='utf-8')
@@ -130,8 +130,8 @@ jobs:
             set -eu
             apk=xingming-student-preview-v1.0.42.apk
             metadata=$("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk")
-            package=$(printf '%s\\n' "$metadata" | sed -n "s/^package: name=\\x27\\([^\\x27]*\\)\\x27.*/\\1/p")
-            activity=$(printf '%s\\n' "$metadata" | sed -n "s/^launchable-activity: name=\\x27\\([^\\x27]*\\)\\x27.*/\\1/p")
+            package=$(printf '%s\n' "$metadata" | sed -n "s/^package: name=\x27\([^\x27]*\)\x27.*/\1/p")
+            activity=$(printf '%s\n' "$metadata" | sed -n "s/^launchable-activity: name=\x27\([^\x27]*\)\x27.*/\1/p")
             test "$package" = "com.xingming.apps.student.preview"
             test -n "$activity"
             adb install "$apk"
