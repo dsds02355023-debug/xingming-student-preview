@@ -18,16 +18,12 @@ for html in root.rglob("index.html"):
             f.write(body)
             name = f.name
         try:
-            result = subprocess.run(
-                ["npx", "--yes", "terser", name, "--compress", "--mangle", "--comments", "false"],
-                check=True, capture_output=True, text=True
-            )
+            result = subprocess.run(["npx", "--yes", "terser", name, "--compress", "--mangle", "--comments", "false"], check=True, capture_output=True, text=True)
             count += 1
             return opening + result.stdout + closing
         finally:
             Path(name).unlink(missing_ok=True)
-    transformed = pattern.sub(minify, source)
-    html.write_text(transformed, encoding="utf-8")
+    html.write_text(pattern.sub(minify, source), encoding="utf-8")
 print(f"Minified and mangled {count} inline JavaScript blocks.")
 if count == 0:
     raise SystemExit("No inline JavaScript was transformed; refusing to continue.")
