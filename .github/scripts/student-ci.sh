@@ -6,8 +6,24 @@ mode=${1:?stage required}
 exec > >(tee -a "smoke-results/stage-$mode.log") 2>&1
 trap 'rc=$?; printf "::error title=Student CI failure::stage=%s line=%s exit=%s command=%s\n" "$mode" "$LINENO" "$rc" "$BASH_COMMAND" >&2' ERR
 export PATH="${ANDROID_HOME:?}/platform-tools:$ANDROID_HOME/emulator:$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+export ANDROID_AVD_HOME="$GITHUB_WORKSPACE/.ci-avd"
+mkdir -p "$ANDROID_AVD_HOME"
 printf '%s START stage=%s\n' "$(date -u +%FT%TZ)" "$mode"
 apk="$GITHUB_WORKSPACE/xingming-student-preview-v1.0.42.apk"
+check_avd() {
+  printf 'ANDROID_AVD_HOME=%s\n' "$ANDROID_AVD_HOME"
+  test -s "$ANDROID_AVD_HOME/student-preview.ini"
+  test -s "$ANDROID_AVD_HOME/student-preview.avd/config.ini"
+  cat "$ANDROID_AVD_HOME/student-preview.ini"
+  timeout -k 5s 15s "$ANDROID_HOME/emulator/emulator" -list-avds | tee smoke-results/avd-list.txt
+  tr -d '\r' < smoke-results/avd-list.txt | grep -Fx student-preview
+}
+show_emulator_logs() {
+  echo '--- emulator stdout ---'
+  tail -n 150 smoke-results/emulator-stdout.log || true
+  echo '--- emulator stderr ---'
+  tail -n 150 smoke-results/emulator-stderr.log || true
+}
 case "$mode" in
 build)
   git -C private-source rev-parse HEAD > smoke-results/source-commit.txt
@@ -56,20 +72,26 @@ kvm)
 sdk)
   manager=$(command -v sdkmanager || true)
   if [ -z "$manager" ]; then manager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"; fi
-  set +e
-  yes | timeout -k 5s 45s "$manager" --licenses > smoke-results/sdk-licenses.log 2>&1
-  rc=${PIPESTATUS[1]}
-  set -e
+  if yes | timeout -k 5s 45s "$manager" --licenses > smoke-results/sdk-licenses.log 2>&1; then
+    rc=0
+  else
+    rc=${PIPESTATUS[1]}
+  fi
   test "$rc" -eq 0
   timeout -k 10s 180s "$manager" 'platform-tools' 'emulator' 'system-images;android-35;default;x86_64' 2>&1 | tee smoke-results/sdk-install.log
   timeout -k 5s 30s "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1 | tee smoke-results/kvm-accel-check.log
   avdmanager=$(command -v avdmanager || true)
   if [ -z "$avdmanager" ]; then avdmanager="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"; fi
-  timeout -k 5s 30s "$avdmanager" create avd --force --name student-preview --package 'system-images;android-35;default;x86_64' --device pixel_2 <<< no
+  timeout -k 5s 30s "$avdmanager" create avd --force --name student-preview --path "$ANDROID_AVD_HOME/student-preview.avd" --package 'system-images;android-35;default;x86_64' --device pixel_2 <<< no
+  test -s "$ANDROID_AVD_HOME/student-preview.avd/config.ini"
+  printf 'avd.ini.encoding=UTF-8\npath=%s\ntarget=android-35\n' "$ANDROID_AVD_HOME/student-preview.avd" > "$ANDROID_AVD_HOME/student-preview.ini"
+  cp "$ANDROID_AVD_HOME/student-preview.ini" smoke-results/avd-location.ini
+  check_avd
   python3 -m venv /tmp/student-preview-venv
   timeout -k 5s 30s /tmp/student-preview-venv/bin/pip install --disable-pip-version-check --timeout 10 --retries 1 websocket-client==1.8.0
   ;;
 boot)
+  check_avd
   if [ ! -x "$ANDROID_HOME/platform-tools/adb" ]; then
     echo "::error::ADB executable missing at $ANDROID_HOME/platform-tools/adb"
     exit 127
@@ -84,8 +106,9 @@ boot)
   ready=0
   while [ "$SECONDS" -lt "$deadline" ]; do
     if ! kill -0 "$pid" 2>/dev/null; then
-      cat smoke-results/emulator-stderr.log
-      echo '::error::Emulator process exited before boot completed.'
+      if wait "$pid"; then emulator_rc=0; else emulator_rc=$?; fi
+      show_emulator_logs
+      echo "::error::Emulator exited before boot completed; process exit=$emulator_rc"
       exit 1
     fi
     state=$(timeout -k 1s 3s adb get-state 2>/dev/null || true)
@@ -94,7 +117,7 @@ boot)
     if [ "$state" = device ] && [ "$boot" = 1 ]; then ready=1; break; fi
     sleep 10
   done
-  if [ "$ready" -ne 1 ]; then echo '::error::Emulator boot exceeded 300 seconds.'; exit 124; fi
+  if [ "$ready" -ne 1 ]; then show_emulator_logs; echo '::error::Emulator boot exceeded 300 seconds.'; exit 124; fi
   for setting in window_animation_scale transition_animation_scale animator_duration_scale; do timeout -k 2s 5s adb shell settings put global "$setting" 0; done
   ;;
 install)
@@ -119,13 +142,15 @@ test)
   exit "$rc"
   ;;
 collect)
+  trap - ERR
   set +e
+  show_emulator_logs
   timeout -k 2s 10s adb devices -l > smoke-results/adb-devices.txt 2>&1
   timeout -k 2s 15s adb logcat -d -v threadtime > smoke-results/logcat.txt 2>&1
   timeout -k 2s 15s adb shell dumpsys activity activities > smoke-results/activities.txt 2>&1
   timeout -k 2s 15s adb exec-out screencap -p > smoke-results/final-screen.png 2> smoke-results/screenshot-error.txt
   if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-    { echo '## Preview CI diagnostics'; echo 'Test exit codes (0=pass, 124=timeout; absent=not executed):'; echo '```'; cat smoke-results/test-status.tsv 2>/dev/null; echo '```'; echo 'Emulator results do not constitute physical Fold8 acceptance.'; } >> "$GITHUB_STEP_SUMMARY"
+    { echo '## Preview CI diagnostics'; echo 'Test exit codes (0=pass, 124=timeout; absent=not executed):'; echo '```'; if [ -f smoke-results/test-status.tsv ]; then cat smoke-results/test-status.tsv; else echo 'No smoke tests executed.'; fi; echo '```'; echo 'Emulator results do not constitute physical Fold8 acceptance.'; } >> "$GITHUB_STEP_SUMMARY"
   fi
   exit 0
   ;;
