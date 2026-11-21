@@ -113,7 +113,20 @@ jobs:
           python3 .github/scripts/obfuscate-inline-js.py
       - name: Build and verify v1.0.42 preview APK
         run: |
-          gradle -p smoke-source --no-daemon --console=plain assembleStudentDebug
+          # Maven Central can temporarily return HTTP 429 under shared runner load.
+          # Retry dependency resolution with exponential backoff before treating it as a build failure.
+          for attempt in 1 2 3 4; do
+            if gradle -p smoke-source --no-daemon --console=plain --refresh-dependencies assembleStudentDebug; then
+              break
+            fi
+            if [ "$attempt" -eq 4 ]; then
+              echo "Gradle build failed after 4 attempts."
+              exit 1
+            fi
+            delay=$((attempt * 30))
+            echo "Gradle dependency/build attempt $attempt failed; retrying in ${delay}s."
+            sleep "$delay"
+          done
           apk=smoke-source/app/build/outputs/apk/student/debug/app-student-debug.apk
           test -s "$apk"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" > preview-badging.txt
