@@ -1,4 +1,4 @@
-name: Student side-by-side preview
+name: Student obfuscated preview APK
 on:
   workflow_dispatch:
 permissions:
@@ -6,10 +6,19 @@ permissions:
 jobs:
   preview:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout public preview workflow
+        uses: actions/checkout@v4
         with:
+          persist-credentials: false
+      - name: Checkout private original source
+        uses: actions/checkout@v4
+        with:
+          repository: dsds02355023-debug/xingming-android-apps
+          ref: main
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          path: private-source
           persist-credentials: false
       - uses: actions/setup-java@v4
         with:
@@ -18,30 +27,42 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
-      - name: Patch and build preview
+      - name: Extract source and apply isolated preview package
         run: |
-          unzip -q source-student-layout-backfix.zip -d smoke-source
+          unzip -q private-source/source-student-layout-backfix.zip -d smoke-source
+          cp private-source/.github/scripts/patch-student.py .github/scripts/patch-student.py
+          cp private-source/.github/scripts/student-smoke.sh .github/scripts/student-smoke.sh
+          cp private-source/.github/scripts/student-back.py .github/scripts/student-back.py
           python3 .github/scripts/patch-student.py
-          gradle -p smoke-source --no-daemon assembleStudentDebug
+      - name: Obfuscate inline JavaScript
+        run: python3 .github/scripts/obfuscate-inline-js.py
+      - name: Build and verify preview APK
+        run: |
+          gradle -p smoke-source --no-daemon --console=plain assembleStudentDebug
           apk=smoke-source/app/build/outputs/apk/student/debug/app-student-debug.apk
+          test -s "$apk"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" > preview-badging.txt
           grep -F "package: name='com.xingming.apps.student.preview'" preview-badging.txt
+          cp "$apk" xingming-student-preview.apk
+      - name: Run Android emulator smoke test
+        run: |
           sed -i 's/com\\.xingming\\.apps\\.student/com.xingming.apps.student.preview/g' .github/scripts/student-smoke.sh .github/scripts/student-back.py
-      - run: sudo chmod a+rw /dev/kvm
+          sudo chmod a+rw /dev/kvm
       - uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
           arch: x86_64
           script: bash -e .github/scripts/student-smoke.sh
-      - run: cp smoke-source/app/build/outputs/apk/student/debug/app-student-debug.apk xingming-student-preview.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: xingming-student-preview
+          name: xingming-student-preview-obfuscated
           path: xingming-student-preview.apk
           if-no-files-found: error
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: student-preview-diagnostics
           path: smoke-results/
           if-no-files-found: ignore
+          retention-days: 7
