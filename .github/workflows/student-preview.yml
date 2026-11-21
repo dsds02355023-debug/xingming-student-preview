@@ -155,7 +155,10 @@ jobs:
           disable-animations: true
           script: |
             set -eu
-            apk=xingming-student-preview-v1.0.42.apk
+            # The emulator action may run its script from a different working directory.
+            # Resolve the uploaded workspace APK explicitly to avoid a relative-path miss.
+            apk="$GITHUB_WORKSPACE/xingming-student-preview-v1.0.42.apk"
+            test -s "$apk"
             metadata=$("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk")
             package=$(printf '%s\n' "$metadata" | sed -n "s/^package: name=\x27\([^\x27]*\)\x27.*/\1/p")
             activity=$(printf '%s\n' "$metadata" | sed -n "s/^launchable-activity: name=\x27\([^\x27]*\)\x27.*/\1/p")
