@@ -8,11 +8,11 @@ root = Path("smoke-source/app")
 count = 0
 for html in root.rglob("index.html"):
     source = html.read_text(encoding="utf-8")
-    pattern = re.compile(r'(<script(?![^>]*\\bsrc=)[^>]*>)([\\s\\S]*?)(</script\\s*>)', re.I)
+    pattern = re.compile(r'(<script(?![^>]*\bsrc=)[^>]*>)([\s\S]*?)(</script\s*>)', re.I)
     def minify(match):
         global count
         opening, body, closing = match.groups()
-        if not body.strip() or re.search(r'\\btype\\s*=\\s*["\\\'](?:application/(?:ld\\+json|json)|importmap)', opening, re.I):
+        if not body.strip() or re.search(r'\btype\s*=\s*["\'](?:application/(?:ld\+json|json)|importmap)', opening, re.I):
             return match.group(0)
         with tempfile.NamedTemporaryFile("w", suffix=".js", encoding="utf-8", delete=False) as f:
             f.write(body)
