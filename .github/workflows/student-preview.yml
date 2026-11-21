@@ -1,4 +1,4 @@
-name: Student obfuscated preview APK
+name: Student v1.0.42 obfuscated Fold8 preview APK
 on:
   workflow_dispatch:
 permissions:
@@ -6,7 +6,7 @@ permissions:
 jobs:
   preview:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 55
     steps:
       - name: Checkout public preview workflow
         uses: actions/checkout@v4
@@ -27,42 +27,136 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
-      - name: Extract source and apply isolated preview package
+      - name: Extract latest student source and prepare isolated v1.0.42 package
+        shell: python
         run: |
-          unzip -q private-source/source-student-layout-backfix.zip -d smoke-source
-          cp private-source/.github/scripts/patch-student.py .github/scripts/patch-student.py
-          cp private-source/.github/scripts/student-smoke.sh .github/scripts/student-smoke.sh
-          cp private-source/.github/scripts/student-back.py .github/scripts/student-back.py
-          python3 .github/scripts/patch-student.py
+          import re, zipfile
+          from pathlib import Path
+          repo = Path('private-source').resolve()
+          choices = []
+          for archive in repo.glob('source*.zip'):
+              try:
+                  with zipfile.ZipFile(archive) as z:
+                      gradle = z.read('app/build.gradle').decode('utf-8')
+                  match = re.search(r'\\bversionCode\\s+(\\d+)', gradle)
+                  if match:
+                      choices.append((int(match.group(1)), archive.name == 'source.zip', archive))
+              except (zipfile.BadZipFile, KeyError, UnicodeDecodeError):
+                  continue
+          if not choices:
+              raise SystemExit('No usable current student source archive')
+          version, _, archive = max(choices)
+          print(f'Using {archive.name} (source versionCode {version})')
+          root = repo / 'student-next-source'
+          root.mkdir()
+          with zipfile.ZipFile(archive) as z:
+              if any(not (root / name).resolve().is_relative_to(root) for name in z.namelist()):
+                  raise SystemExit('Unsafe archive path')
+              z.extractall(root)
+          gradle_file = root / 'app/build.gradle'
+          gradle = gradle_file.read_text(encoding='utf-8')
+          gradle, count = re.subn(r"applicationIdSuffix\\s+(['\\"])\\.student\\1", "applicationIdSuffix '.student.next'", gradle)
+          if count != 1:
+              raise SystemExit(f'Expected one student applicationIdSuffix, found {count}')
+          gradle, count = re.subn(r'\\bversionCode\\s+\\d+', 'versionCode 42', gradle)
+          if count != 1:
+              raise SystemExit(f'Expected one versionCode, found {count}')
+          gradle, count = re.subn(r"\\bversionName\\s+(['\\"])[^'\\"]+\\1", 'versionName "1.0.42"', gradle)
+          if count == 0:
+              gradle = re.sub(r'(\\bversionCode\\s+42)', r'\\1\\n        versionName "1.0.42"', gradle, count=1)
+          elif count != 1:
+              raise SystemExit(f'Expected at most one versionName, found {count}')
+          gradle_file.write_text(gradle.replace('姓名學・學生版', '姓名學・學生測試版'), encoding='utf-8')
+      - name: Integrate v1.0.42 update, native bridge, canonical UI and Fold8 system bars
+        env:
+          STUDENT_NEXT_UPDATE_MANIFEST_URL: https://xingming-student-updates-wz49.vercel.app/update.json
+          STUDENT_NEXT_VERSION_NAME: 1.0.42
+        run: |
+          python3 private-source/.github/scripts/integrate_student_next_update.py private-source/student-next-source
+          python3 private-source/.github/scripts/integrate_student_next_haptics.py private-source/student-next-source
+          python3 private-source/.github/scripts/integrate_student_next_ui.py private-source/student-next-source
+          python3 private-source/.github/scripts/integrate_student_next_v140.py private-source/student-next-source
+      - name: Isolate preview package ID and apply JavaScript obfuscation
+        shell: python
+        run: |
+          import re
+          from pathlib import Path
+          root = Path('private-source/student-next-source')
+          gradle = root / 'app/build.gradle'
+          text = gradle.read_text(encoding='utf-8')
+          text, count = re.subn(r"applicationIdSuffix\\s+(['\\"])\\.student\\.next\\1", "applicationIdSuffix '.student.preview'", text)
+          if count != 1:
+              raise SystemExit(f'Expected one isolated .student.next suffix, found {count}')
+          gradle.write_text(text, encoding='utf-8')
+          for path in (root / 'app/src').rglob('*.java'):
+              source = path.read_text(encoding='utf-8')
+              updated = source.replace('com.xingming.apps.student.next', 'com.xingming.apps.student.preview').replace('endsWith(".student.next")', 'endsWith(".student.preview")')
+              if updated != source:
+                  path.write_text(updated, encoding='utf-8')
+          for path in (root / 'app/src').rglob('*.xml'):
+              source = path.read_text(encoding='utf-8')
+              updated = source.replace('com.xingming.apps.student.next', 'com.xingming.apps.student.preview')
+              if updated != source:
+                  path.write_text(updated, encoding='utf-8')
+          html = root / 'app/src/student/assets/index.html'
+          page = html.read_text(encoding='utf-8')
+          for marker in ('1.0.42', 'student-v1-0-42-brand-and-route-runtime', 'fold8-results-layout-fix', 'result-identity', 'result-details'):
+              if marker not in page:
+                  raise SystemExit(f'Missing v1.0.42 source marker: {marker}')
+          if page.count('id="lxUpdate"') != 1:
+              raise SystemExit('Expected exactly one in-app update entry')
+          html.write_text(page, encoding='utf-8')
+          print('Verified canonical v1.0.42 UI and isolated package com.xingming.apps.student.preview.')
       - name: Obfuscate inline JavaScript
-        run: python3 .github/scripts/obfuscate-inline-js.py
-      - name: Build and verify preview APK
+        run: |
+          ln -s private-source/student-next-source smoke-source
+          python3 .github/scripts/obfuscate-inline-js.py
+      - name: Build and verify v1.0.42 preview APK
         run: |
           gradle -p smoke-source --no-daemon --console=plain assembleStudentDebug
           apk=smoke-source/app/build/outputs/apk/student/debug/app-student-debug.apk
           test -s "$apk"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" > preview-badging.txt
-          grep -F "package: name='com.xingming.apps.student.preview'" preview-badging.txt
-          cp "$apk" xingming-student-preview.apk
-      - name: Prepare emulator smoke test
-        run: |
-          sed -i 's/com\\.xingming\\.apps\\.student/com.xingming.apps.student.preview/g' .github/scripts/student-smoke.sh .github/scripts/student-back.py
-          sudo chmod a+rw /dev/kvm
-      - uses: reactivecircus/android-emulator-runner@v2
+          grep -F "package: name='com.xingming.apps.student.preview' versionCode='42'" preview-badging.txt
+          grep -F "versionName='1.0.42'" preview-badging.txt
+          cp "$apk" xingming-student-preview-v1.0.42.apk
+      - name: Run Fold8 and feature emulator acceptance
+        uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
           arch: x86_64
-          script: bash -e .github/scripts/student-smoke.sh
-      - uses: actions/upload-artifact@v4
+          emulator-boot-timeout: 900
+          script: |
+            set -eu
+            apk=xingming-student-preview-v1.0.42.apk
+            metadata=$("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk")
+            package=$(printf '%s\\n' "$metadata" | sed -n "s/^package: name=\\x27\\([^\\x27]*\\)\\x27.*/\\1/p")
+            activity=$(printf '%s\\n' "$metadata" | sed -n "s/^launchable-activity: name=\\x27\\([^\\x27]*\\)\\x27.*/\\1/p")
+            test "$package" = "com.xingming.apps.student.preview"
+            test -n "$activity"
+            adb install "$apk"
+            adb shell am start -W -n "$package/$activity"
+            python3 -m venv /tmp/student-preview-venv
+            /tmp/student-preview-venv/bin/pip install websocket-client==1.8.0
+            export STUDENT_TEST_PACKAGE="$package"
+            /tmp/student-preview-venv/bin/python private-source/.github/scripts/student-settings-smoke.py
+            /tmp/student-preview-venv/bin/python private-source/.github/scripts/student-rules-smoke.py
+            /tmp/student-preview-venv/bin/python private-source/.github/scripts/student-home-back-smoke.py
+            STUDENT_EXPECTED_VERSION_NAME=1.0.42 /tmp/student-preview-venv/bin/python private-source/.github/scripts/student-result-layout-smoke.py
+      - name: Upload v1.0.42 obfuscated preview APK
+        uses: actions/upload-artifact@v4
         with:
-          name: xingming-student-preview-obfuscated
-          path: xingming-student-preview.apk
+          name: xingming-student-preview-v1.0.42-obfuscated
+          path: xingming-student-preview-v1.0.42.apk
           if-no-files-found: error
           retention-days: 7
-      - uses: actions/upload-artifact@v4
+      - name: Upload emulator diagnostics
         if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: student-preview-diagnostics
-          path: smoke-results/
+          name: student-v1.0.42-preview-diagnostics
+          path: |
+            result-layout-*.png
+            smoke-results/
           if-no-files-found: ignore
           retention-days: 7
