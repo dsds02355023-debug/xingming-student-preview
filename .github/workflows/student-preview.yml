@@ -133,12 +133,22 @@ jobs:
           grep -F "package: name='com.xingming.apps.student.preview' versionCode='42'" preview-badging.txt
           grep -F "versionName='1.0.42'" preview-badging.txt
           cp "$apk" xingming-student-preview-v1.0.42.apk
+      - name: Upload v1.0.42 obfuscated preview APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: xingming-student-preview-v1.0.42-obfuscated
+          path: xingming-student-preview-v1.0.42.apk
+          if-no-files-found: error
+          retention-days: 7
       - name: Run Fold8 and feature emulator acceptance
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
           arch: x86_64
-          emulator-boot-timeout: 900
+          profile: pixel_2
+          emulator-boot-timeout: 1200
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -memory 2048 -cores 2
+          disable-animations: true
           script: |
             set -eu
             apk=xingming-student-preview-v1.0.42.apk
@@ -156,13 +166,6 @@ jobs:
             /tmp/student-preview-venv/bin/python private-source/.github/scripts/student-rules-smoke.py
             /tmp/student-preview-venv/bin/python private-source/.github/scripts/student-home-back-smoke.py
             STUDENT_EXPECTED_VERSION_NAME=1.0.42 /tmp/student-preview-venv/bin/python private-source/.github/scripts/student-result-layout-smoke.py
-      - name: Upload v1.0.42 obfuscated preview APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: xingming-student-preview-v1.0.42-obfuscated
-          path: xingming-student-preview-v1.0.42.apk
-          if-no-files-found: error
-          retention-days: 7
       - name: Upload emulator diagnostics
         if: always()
         uses: actions/upload-artifact@v4
