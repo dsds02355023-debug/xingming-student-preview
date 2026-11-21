@@ -146,21 +146,40 @@ jobs:
           path: xingming-student-preview-v1.0.42.apk
           if-no-files-found: error
           retention-days: 7
+      - name: Enable and verify KVM access
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p smoke-results
+          exec > >(tee smoke-results/kvm-host-check.log) 2>&1
+          date -u +%FT%TZ
+          id
+          if [ ! -c /dev/kvm ]; then
+            echo '::error::KVM device unavailable; refusing software CPU emulation.'
+            exit 1
+          fi
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle --timeout=30
+          ls -l /dev/kvm
+          test -r /dev/kvm
+          test -w /dev/kvm
       - name: Run Fold8 and feature emulator acceptance
-        # GitHub-hosted runners may not expose KVM. Force the Android emulator
-        # to use its supported TCG software CPU backend instead of exiting on -accel off.
+        timeout-minutes: 40
         env:
-          ANDROID_I_WANT_MY_TCG: "yes"
           STUDENT_PREVIEW_APK_PATH: ${{ github.workspace }}/xingming-student-preview-v1.0.42.apk
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
           arch: x86_64
           profile: pixel_2
-          emulator-boot-timeout: 1200
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -memory 2048 -cores 2
+          disable-linux-hw-accel: false
+          emulator-boot-timeout: 600
+          emulator-options: -accel on -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -memory 2048 -cores 2
           disable-animations: true
-          # The action executes each input line in a separate shell.
+          pre-emulator-launch-script: bash -euo pipefail -c 'timeout --kill-after=5s 30s "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1 | tee "$GITHUB_WORKSPACE/smoke-results/kvm-accel-check.log"'
           # Keep variables, conditionals and exports inside one Bash process.
           script: bash "$GITHUB_WORKSPACE/.github/scripts/student-preview-acceptance.sh"
       - name: Upload emulator diagnostics
