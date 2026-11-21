@@ -145,6 +145,7 @@ jobs:
         # to use its supported TCG software CPU backend instead of exiting on -accel off.
         env:
           ANDROID_I_WANT_MY_TCG: "yes"
+          STUDENT_PREVIEW_APK_PATH: ${{ github.workspace }}/xingming-student-preview-v1.0.42.apk
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -155,10 +156,17 @@ jobs:
           disable-animations: true
           script: |
             set -eu
-            # The emulator action may run its script from a different working directory.
-            # Resolve the uploaded workspace APK explicitly to avoid a relative-path miss.
-            apk="$GITHUB_WORKSPACE/xingming-student-preview-v1.0.42.apk"
-            test -s "$apk"
+            # Pass the artifact's exact workspace path through the step environment.
+            # Emit diagnostics before failing so a future path issue is immediately actionable.
+            apk="$STUDENT_PREVIEW_APK_PATH"
+            if [ ! -s "$apk" ]; then
+              echo "Preview APK missing at: $apk"
+              echo "PWD: $(pwd)"
+              echo "GITHUB_WORKSPACE: ${GITHUB_WORKSPACE:-<unset>}"
+              ls -la "$GITHUB_WORKSPACE" || true
+              find "$GITHUB_WORKSPACE" -maxdepth 5 -name 'xingming-student-preview-v1.0.42.apk' -print || true
+              exit 1
+            fi
             metadata=$("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk")
             package=$(printf '%s\n' "$metadata" | sed -n "s/^package: name=\x27\([^\x27]*\)\x27.*/\1/p")
             activity=$(printf '%s\n' "$metadata" | sed -n "s/^launchable-activity: name=\x27\([^\x27]*\)\x27.*/\1/p")
